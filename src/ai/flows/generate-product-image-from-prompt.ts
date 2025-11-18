@@ -12,6 +12,7 @@ import {z} from 'genkit';
 
 const GenerateProductImageFromPromptInputSchema = z.object({
   prompt: z.string().describe('A text prompt describing the desired product image.'),
+  imageUrl: z.string().optional().describe("A source image to use for image-to-image generation, as a data URI that must include a MIME type and use Base64 encoding. Expected format: 'data:<mimetype>;base64,<encoded_data>'."),
 });
 export type GenerateProductImageFromPromptInput = z.infer<typeof GenerateProductImageFromPromptInputSchema>;
 
@@ -24,13 +25,6 @@ export async function generateProductImageFromPrompt(input: GenerateProductImage
   return generateProductImageFromPromptFlow(input);
 }
 
-const prompt = ai.definePrompt({
-  name: 'generateProductImageFromPromptPrompt',
-  input: {schema: GenerateProductImageFromPromptInputSchema},
-  output: {schema: GenerateProductImageFromPromptOutputSchema},
-  prompt: `You are an AI assistant specializing in generating product images based on text prompts. Please generate a high-quality image that accurately reflects the description in the prompt.\n\nPrompt: {{{prompt}}}`,
-});
-
 const generateProductImageFromPromptFlow = ai.defineFlow(
   {
     name: 'generateProductImageFromPromptFlow',
@@ -38,9 +32,17 @@ const generateProductImageFromPromptFlow = ai.defineFlow(
     outputSchema: GenerateProductImageFromPromptOutputSchema,
   },
   async input => {
+    const prompt: any[] = [{text: input.prompt}];
+    if (input.imageUrl) {
+        prompt.unshift({media: {url: input.imageUrl}});
+    }
+
     const {media} = await ai.generate({
-      model: 'googleai/imagen-4.0-fast-generate-001',
-      prompt: input.prompt,
+      model: 'googleai/gemini-2.5-flash-image-preview',
+      prompt: prompt,
+       config: {
+        responseModalities: ['IMAGE'],
+      },
     });
 
     if (!media || !media.url) {

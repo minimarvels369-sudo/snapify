@@ -123,7 +123,7 @@ export default function GeneratePage() {
     setIsGenerating(true);
     setGeneratedImage(null);
     try {
-      const { imageUrl } = await generateProductImageFromPrompt({ prompt });
+      const { imageUrl } = await generateProductImageFromPrompt({ prompt, imageUrl: originalImage?.imageUrl });
       setGeneratedImage(imageUrl);
       toast({ title: 'Image Generated!', description: 'Your new product image is ready.' });
     } catch (error) {
