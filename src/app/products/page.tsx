@@ -1,8 +1,9 @@
+
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -32,6 +33,7 @@ interface Product {
 
 export default function ProductsPage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,10 +109,9 @@ export default function ProductsPage() {
   }
 
   const handleNavigate = () => {
-    // In a real app, you would navigate to the generation page
-    // For now, we'll just log the selected products
-    console.log("Selected products for generation:", selectedProducts);
-    alert(`Selected ${selectedProducts.length} products for generation!`);
+    const params = new URLSearchParams();
+    selectedProducts.forEach(id => params.append('productIds', id));
+    router.push(`/generate?${params.toString()}`);
   }
 
   return (
@@ -190,3 +191,5 @@ export default function ProductsPage() {
     </div>
   );
 }
+
+    
