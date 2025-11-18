@@ -1,3 +1,58 @@
 {
-  "placeholderImages": []
+  "placeholderImages": [
+    {
+      "id": "gen-1",
+      "description": "Woman in a red dress in a city street",
+      "imageUrl": "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxfHxmYXNoaW9uJTIwbW9kZWx8ZW58MHx8fHwxNzYzNDU4MzU4fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "fashion model"
+    },
+    {
+      "id": "gen-2",
+      "description": "Man wearing a stylish blue jacket",
+      "imageUrl": "https://images.unsplash.com/photo-1543764477-646365e11da3?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxMHx8bWFsZSUyMG1vZGVsfGVufDB8fHx8MTc2MzQ5MzU0M3ww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "male model"
+    },
+    {
+      "id": "gen-3",
+      "description": "Close up on a designer handbag",
+      "imageUrl": "https://images.unsplash.com/photo-1702326626601-74d2e86922b4?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwyfHxoYW5kYmFnJTIwYWNjZXNzb3J5fGVufDB8fHx8MTc2MzQ4Njc5Nnww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "handbag accessory"
+    },
+    {
+      "id": "gen-4",
+      "description": "Fashionable sneakers on a colorful background",
+      "imageUrl": "https://images.unsplash.com/photo-1662037132011-1c403fd1705c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxzbmVha2VycyUyMHNob2VzfGVufDB8fHx8MTc2MzM3NjczNnww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "sneakers shoes"
+    },
+    {
+      "id": "gen-5",
+      "description": "Model in a floral print summer dress",
+      "imageUrl": "https://images.unsplash.com/photo-1532675432006-329c6fed7045?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw3fHxzdW1tZXIlMjBkcmVzc3xlbnwwfHx8fDE3NjM0ODU5MTh8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "summer dress"
+    },
+    {
+      "id": "gen-6",
+      "description": "Man in a formal suit and tie",
+      "imageUrl": "https://images.unsplash.com/photo-1758534063951-1c78600f8129?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw0fHxmb3JtYWwlMjBzdWl0fGVufDB8fHx8MTc2MzM3MjM2NXww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "formal suit"
+    },
+    {
+      "id": "gen-7",
+      "description": "Woman wearing sunglasses and a hat on a beach",
+      "imageUrl": "https://images.unsplash.com/photo-1662864947687-b908bdd57a46?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwyfHxiZWFjaCUyMGZhc2hpb258ZW58MHx8fHwxNzYzNDkzNTQzfDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "beach fashion"
+    },
+    {
+      "id": "gen-8",
+      "description": "Athletic wear on a model in a gym setting",
+      "imageUrl": "https://images.unsplash.com/photo-1746003624976-64d50dd8a63a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwyfHxhdGhsZXRpYyUyMHdlYXJ8ZW58MHx8fHwxNzYzNDkzNTQzfDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "athletic wear"
+    },
+    {
+      "id": "gen-9",
+      "description": "Original product photo of a white t-shirt",
+      "imageUrl": "https://images.unsplash.com/photo-1671438118257-cefa6c86fd50?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxMHx8d2hpdGUlMjB0LXNoaXJ0fGVufDB8fHx8MTc2MzQ5MzU0M3ww&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "white t-shirt"
+    }
+  ]
 }
