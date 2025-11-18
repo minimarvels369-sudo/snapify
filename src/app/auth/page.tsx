@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Loader } from "lucide-react";
 
-export default function AuthPage() {
+function AuthComponent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [shop, setShop] = useState("");
@@ -34,7 +34,9 @@ export default function AuthPage() {
       });
       const data = await response.json();
       if (data.authenticated) {
-        router.push(`/?shop=${shopDomain}`);
+        // App Bridge will handle the redirect within the iframe
+        // Just need to navigate to the relative path
+        router.push("/");
       } else {
         // If not authenticated, stay on this page to show the install button
         setIsLoading(false);
@@ -91,4 +93,12 @@ export default function AuthPage() {
       </Card>
     </div>
   );
+}
+
+export default function AuthPage() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader className="animate-spin" /></div>}>
+            <AuthComponent />
+        </Suspense>
+    )
 }

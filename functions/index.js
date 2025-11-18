@@ -12,8 +12,11 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
-const apiKey = process.env.SHOPIFY_API_KEY;
+// IMPORTANT: Set these in your .env file
+const apiKey = process.env.NEXT_PUBLIC_SHOPIFY_API_KEY;
 const apiSecret = process.env.SHOPIFY_API_SECRET;
+const appName = process.env.APP_NAME;
+
 const scopes = "read_products,write_products,read_product_listings,write_product_listings";
 
 /**
@@ -28,7 +31,8 @@ app.post("/auth", (req, res) => {
   }
 
   const state = crypto.randomBytes(16).toString("hex");
-  const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/callback`;
+  // The redirect URI must be an absolute URL
+  const redirectUri = `https://us-central1-${process.env.GCLOUD_PROJECT}.cloudfunctions.net/api/auth/callback`;
 
   // Store the nonce in Firestore for later verification
   db.collection("shops").doc(shop).set({ state }, { merge: true })
@@ -64,7 +68,22 @@ app.get("/auth/callback", async (req, res) => {
     crypto.createHmac("sha256", apiSecret).update(message).digest("hex"),
     "utf-8"
   );
-  if (generatedHash.length !== providedHmac.length || !crypto.timingSafeEqual(generatedHash, providedHmac)) {
+
+  let shopifyHmac;
+  if (typeof hmac === 'string') {
+    shopifyHmac = Buffer.from(hmac, 'utf-8');
+  } else if (Array.isArray(hmac)) {
+    // Handle the case where hmac is an array of strings, though unlikely for this parameter.
+    // For this example, we'll just use the first element.
+    shopifyHmac = Buffer.from(hmac[0], 'utf-8');
+  } else {
+    // hmac is undefined or not a string/array
+    return res.status(400).send('HMAC validation failed: Invalid hmac parameter.');
+  }
+
+  const generatedHmac = crypto.createHmac('sha256', apiSecret).update(message).digest();
+
+  if (!crypto.timingSafeEqual(generatedHmac, shopifyHmac)) {
     return res.status(400).send("HMAC validation failed.");
   }
   
@@ -94,9 +113,13 @@ app.get("/auth/callback", async (req, res) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       isActive: true,
     }, { merge: true });
-
+    
+    // 5. Get the host to redirect to the embedded app
+    const host = req.query.host;
+    const encodedHost = Buffer.from(host, 'utf-8').toString('base64');
+    
     // Redirect to the app's root in Shopify admin
-    res.redirect(`https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${process.env.APP_NAME}`);
+    res.redirect(`https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}?shop=${shop}&host=${encodedHost}`);
   } catch (error) {
     console.error("Error during OAuth callback:", error);
     res.status(500).send(error.message);
