@@ -10,7 +10,16 @@ const db = admin.firestore();
 
 const app = express();
 app.use(cors({ origin: true }));
-app.use(express.json());
+// Use express.json() for auth routes, but raw body for webhook verification
+app.use((req, res, next) => {
+  if (req.path.includes('/webhooks')) {
+    // Pass raw body for webhook verification
+    next();
+  } else {
+    express.json()(req, res, next);
+  }
+});
+
 
 // IMPORTANT: Set these in your .env file
 const apiKey = process.env.NEXT_PUBLIC_SHOPIFY_API_KEY;
@@ -148,6 +157,192 @@ app.post("/auth/verify", async (req, res) => {
     console.error("Error verifying auth:", error);
     res.status(500).send("Error verifying session.");
   }
+});
+
+
+/**
+ * Fetches a Shopify client instance with the stored access token.
+ * @param {string} shopDomain The Shopify domain (e.g., 'your-shop.myshopify.com').
+ * @returns {Promise<Shopify>} A Shopify API client instance.
+ */
+async function getShopifyClient(shopDomain) {
+    const shopDoc = await db.collection('shops').doc(shopDomain).get();
+    if (!shopDoc.exists || !shopDoc.data().accessToken) {
+        throw new functions.https.HttpsError('not-found', 'Shop not found or access token missing.');
+    }
+    const { accessToken } = shopDoc.data();
+    return new Shopify({
+        shopName: shopDomain,
+        accessToken: accessToken,
+    });
+}
+
+/**
+ * GraphQL query to fetch products with pagination.
+ */
+const productsQuery = `
+query getProducts($first: Int!, $after: String) {
+  products(first: $first, after: $after) {
+    edges {
+      cursor
+      node {
+        id
+        title
+        descriptionHtml
+        images(first: 10) {
+          edges {
+            node {
+              url
+              altText
+            }
+          }
+        }
+        variants(first: 10) {
+          edges {
+            node {
+              id
+              title
+              price
+              sku
+            }
+          }
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+    }
+  }
+}`;
+
+/**
+ * Recursively fetches all products from a Shopify store using GraphQL pagination.
+ * @param {Shopify} shopify - The Shopify API client.
+ * @param {string|null} cursor - The pagination cursor.
+ * @returns {Promise<Array>} A list of all products.
+ */
+async function fetchAllProducts(shopify, cursor = null) {
+    try {
+        const response = await shopify.graphql(productsQuery, { first: 250, after: cursor });
+        const products = response.products.edges.map(edge => edge.node);
+
+        if (response.products.pageInfo.hasNextPage) {
+            const lastCursor = response.products.edges[response.products.edges.length - 1].cursor;
+            // Small delay to respect rate limits
+            await new Promise(resolve => setTimeout(resolve, 500));
+            const nextProducts = await fetchAllProducts(shopify, lastCursor);
+            return products.concat(nextProducts);
+        } else {
+            return products;
+        }
+    } catch (error) {
+        console.error('Error fetching products from Shopify:', error);
+        // Implement retry logic or better error logging here
+        throw new functions.https.HttpsError('internal', 'Failed to fetch products from Shopify', error);
+    }
+}
+
+/**
+ * Route: /api/products/sync
+ * Description: Fetches all products from Shopify and saves them to Firestore.
+ */
+app.post("/products/sync", async (req, res) => {
+    const { shop } = req.body;
+    if (!shop) {
+        return res.status(400).send("Missing shop parameter.");
+    }
+
+    try {
+        const shopify = await getShopifyClient(shop);
+        const products = await fetchAllProducts(shopify);
+        
+        const batch = db.batch();
+        products.forEach(product => {
+            const productId = product.id.split('/').pop();
+            const productRef = db.collection('shops').doc(shop).collection('products').doc(productId);
+            batch.set(productRef, product, { merge: true });
+        });
+        await batch.commit();
+
+        // Update a timestamp to indicate the last sync time
+        await db.collection('shops').doc(shop).update({
+            productsSyncedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        res.status(200).json({ success: true, message: `Synced ${products.length} products.` });
+    } catch (error) {
+        console.error("Error syncing products:", error);
+        res.status(500).send(`Error syncing products: ${error.message}`);
+    }
+});
+
+
+// Middleware to verify Shopify webhooks
+const verifyShopifyWebhook = (req, res, next) => {
+    const hmac = req.get('X-Shopify-Hmac-Sha256');
+    if (!hmac) {
+        return res.status(401).send('HMAC signature is missing');
+    }
+
+    const genHash = crypto
+        .createHmac('sha256', apiSecret)
+        .update(req.rawBody, 'utf8')
+        .digest('base64');
+
+    if (crypto.timingSafeEqual(Buffer.from(hmac, 'base64'), Buffer.from(genHash, 'base64'))) {
+        next();
+    } else {
+        res.status(401).send('HMAC signature is invalid');
+    }
+};
+
+
+app.post("/webhooks/products/create", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const product = req.body;
+    const productId = product.id.toString();
+
+    try {
+        const productRef = db.collection('shops').doc(shop).collection('products').doc(productId);
+        await productRef.set(product, { merge: true });
+        console.log(`Product ${productId} created for shop ${shop}`);
+        res.status(200).send('OK');
+    } catch (error) {
+        console.error(`Failed to create product ${productId} for ${shop}:`, error);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+app.post("/webhooks/products/update", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const product = req.body;
+    const productId = product.id.toString();
+
+    try {
+        const productRef = db.collection('shops').doc(shop).collection('products').doc(productId);
+        await productRef.update(product);
+        console.log(`Product ${productId} updated for shop ${shop}`);
+        res.status(200).send('OK');
+    } catch (error) {
+        console.error(`Failed to update product ${productId} for ${shop}:`, error);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+app.post("/webhooks/products/delete", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const { id } = req.body;
+    const productId = id.toString();
+    
+    try {
+        const productRef = db.collection('shops').doc(shop).collection('products').doc(productId);
+        await productRef.delete();
+        console.log(`Product ${productId} deleted for shop ${shop}`);
+        res.status(200).send('OK');
+    } catch (error) {
+        console.error(`Failed to delete product ${productId} for ${shop}:`, error);
+        res.status(500).send('Internal Server Error');
+    }
 });
 
 
