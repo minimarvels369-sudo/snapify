@@ -29,6 +29,16 @@ const appName = process.env.APP_NAME;
 const scopes = "read_products,write_products,read_product_listings,write_product_listings";
 
 /**
+ * Returns the base URL for the cloud functions.
+ * @returns {string} The base URL.
+ */
+function getFunctionsBaseUrl() {
+    const region = process.env.FUNCTION_REGION || 'us-central1';
+    const projectId = process.env.GCLOUD_PROJECT;
+    return `https://{region}-{projectId}.cloudfunctions.net/api`;
+}
+
+/**
  * Route: /api/auth
  * Description: Starts the Shopify OAuth flow.
  * It builds the authorization URL and redirects the user to it.
@@ -40,8 +50,7 @@ app.post("/auth", (req, res) => {
   }
 
   const state = crypto.randomBytes(16).toString("hex");
-  // The redirect URI must be an absolute URL
-  const redirectUri = `https://us-central1-${process.env.GCLOUD_PROJECT}.cloudfunctions.net/api/auth/callback`;
+  const redirectUri = `${getFunctionsBaseUrl().replace('{region}', process.env.FUNCTION_REGION || 'us-central1').replace('{projectId}', process.env.GCLOUD_PROJECT)}/auth/callback`;
 
   // Store the nonce in Firestore for later verification
   db.collection("shops").doc(shop).set({ state }, { merge: true })
@@ -82,11 +91,8 @@ app.get("/auth/callback", async (req, res) => {
   if (typeof hmac === 'string') {
     shopifyHmac = Buffer.from(hmac, 'utf-8');
   } else if (Array.isArray(hmac)) {
-    // Handle the case where hmac is an array of strings, though unlikely for this parameter.
-    // For this example, we'll just use the first element.
     shopifyHmac = Buffer.from(hmac[0], 'utf-8');
   } else {
-    // hmac is undefined or not a string/array
     return res.status(400).send('HMAC validation failed: Invalid hmac parameter.');
   }
 
@@ -115,15 +121,18 @@ app.get("/auth/callback", async (req, res) => {
     // 4. Store shop data securely in Firestore
     await db.collection("shops").doc(shop).set({
       shopDomain: shop,
-      accessToken: accessToken, // In a production app, this should be encrypted
+      accessToken: accessToken,
       plan: "free",
-      credits: 100, // Initial credits
+      credits: 100,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       isActive: true,
     }, { merge: true });
+
+    // 5. Register webhooks automatically
+    await registerWebhooks(shop, accessToken);
     
-    // 5. Get the host to redirect to the embedded app
+    // 6. Get the host to redirect to the embedded app
     const host = req.query.host;
     const encodedHost = Buffer.from(host, 'utf-8').toString('base64');
     
@@ -134,6 +143,58 @@ app.get("/auth/callback", async (req, res) => {
     res.status(500).send(error.message);
   }
 });
+
+/**
+ * Registers the necessary webhooks for the app.
+ * @param {string} shopDomain - The shop domain.
+ * @param {string} accessToken - The shop's access token.
+ */
+async function registerWebhooks(shopDomain, accessToken) {
+    const shopify = new Shopify({
+        shopName: shopDomain,
+        accessToken: accessToken,
+    });
+
+    const baseUrl = getFunctionsBaseUrl().replace('{region}', process.env.FUNCTION_REGION || 'us-central1').replace('{projectId}', process.env.GCLOUD_PROJECT);
+    const webhookTopics = [
+        { topic: 'products/create', address: `${baseUrl}/webhooks/products/create` },
+        { topic: 'products/update', address: `${baseUrl}/webhooks/products/update` },
+        { topic: 'products/delete', address: `${baseUrl}/webhooks/products/delete` },
+    ];
+
+    // First, delete any existing webhooks for this app to avoid duplicates
+    try {
+        const existingWebhooks = await shopify.webhook.list();
+        for (const webhook of existingWebhooks) {
+            // Check if the webhook address belongs to our function
+            if (webhook.address.startsWith(baseUrl)) {
+                await shopify.webhook.delete(webhook.id);
+                console.log(`Deleted existing webhook ${webhook.id} for topic ${webhook.topic}`);
+            }
+        }
+    } catch (error) {
+        console.error('Error deleting existing webhooks:', error);
+    }
+    
+    // Then, create the new webhooks
+    for (const { topic, address } of webhookTopics) {
+        try {
+            await shopify.webhook.create({
+                topic: topic,
+                address: address,
+                format: 'json',
+            });
+            console.log(`Webhook created for topic: ${topic} at ${address}`);
+        } catch (error) {
+            // It's possible the webhook already exists, check for that error
+            if (error.response && error.response.body && error.response.body.errors && error.response.body.errors.address) {
+                 console.warn(`Webhook for ${topic} might already exist:`, error.response.body.errors.address);
+            } else {
+                console.error(`Failed to create webhook for ${topic}:`, error);
+            }
+        }
+    }
+}
 
 
 /**
@@ -299,7 +360,7 @@ const verifyShopifyWebhook = (req, res, next) => {
 
 app.post("/webhooks/products/create", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
     const shop = req.get('X-Shopify-Shop-Domain');
-    const product = req.body;
+    const product = JSON.parse(req.body.toString());
     const productId = product.id.toString();
 
     try {
@@ -315,7 +376,7 @@ app.post("/webhooks/products/create", express.raw({type: 'application/json'}), v
 
 app.post("/webhooks/products/update", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
     const shop = req.get('X-Shopify-Shop-Domain');
-    const product = req.body;
+    const product = JSON.parse(req.body.toString());
     const productId = product.id.toString();
 
     try {
@@ -331,7 +392,7 @@ app.post("/webhooks/products/update", express.raw({type: 'application/json'}), v
 
 app.post("/webhooks/products/delete", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
     const shop = req.get('X-Shopify-Shop-Domain');
-    const { id } = req.body;
+    const { id } = JSON.parse(req.body.toString());
     const productId = id.toString();
     
     try {
@@ -347,3 +408,5 @@ app.post("/webhooks/products/delete", express.raw({type: 'application/json'}), v
 
 
 exports.api = functions.https.onRequest(app);
+
+    
