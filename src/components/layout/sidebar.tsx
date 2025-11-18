@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Home, Image, CreditCard, Settings, LifeBuoy } from "lucide-react";
+import { Bot, Home, Image, CreditCard, Settings, LifeBuoy, ShoppingBag } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -15,6 +15,7 @@ export function Sidebar() {
 
   const navItems = [
     { href: "/", icon: Home, label: "Dashboard" },
+    { href: "/products", icon: ShoppingBag, label: "Products" },
     { href: "/generate", icon: Bot, label: "Generate" },
     { href: "/gallery", icon: Image, label: "Gallery" },
     { href: "/billing", icon: CreditCard, label: "Billing" },

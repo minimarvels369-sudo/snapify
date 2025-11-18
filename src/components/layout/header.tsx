@@ -12,6 +12,7 @@ import {
   LifeBuoy,
   LogOut,
   User,
+  ShoppingBag,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -41,6 +42,7 @@ export function Header() {
 
   const navItems = [
     { href: "/", icon: Home, label: "Dashboard" },
+    { href: "/products", icon: ShoppingBag, label: "Products" },
     { href: "/generate", icon: Bot, label: "Generate" },
     { href: "/gallery", icon: Image, label: "Gallery" },
     { href: "/billing", icon: CreditCard, label: "Billing" },

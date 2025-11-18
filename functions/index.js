@@ -81,16 +81,12 @@ app.get("/auth/callback", async (req, res) => {
   const map = { ...req.query };
   delete map.hmac;
   const message = new URLSearchParams(map).toString();
-  const providedHmac = Buffer.from(hmac, "utf-8");
-  const generatedHash = Buffer.from(
-    crypto.createHmac("sha256", apiSecret).update(message).digest("hex"),
-    "utf-8"
-  );
-
+  
   let shopifyHmac;
   if (typeof hmac === 'string') {
     shopifyHmac = Buffer.from(hmac, 'utf-8');
   } else if (Array.isArray(hmac)) {
+    // Take the first element if hmac is an array
     shopifyHmac = Buffer.from(hmac[0], 'utf-8');
   } else {
     return res.status(400).send('HMAC validation failed: Invalid hmac parameter.');
@@ -337,6 +333,30 @@ app.post("/products/sync", async (req, res) => {
     }
 });
 
+/**
+ * Route: /api/products
+ * Description: Fetches products for a shop from Firestore.
+ */
+app.get("/products", async (req, res) => {
+    const { shop } = req.query;
+    if (!shop) {
+        return res.status(400).send("Missing shop parameter.");
+    }
+
+    try {
+        const productsRef = db.collection('shops').doc(shop).collection('products');
+        const snapshot = await productsRef.get();
+        if (snapshot.empty) {
+            return res.status(200).json({ products: [] });
+        }
+        const products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        res.status(200).json({ products });
+    } catch (error) {
+        console.error(`Error fetching products from Firestore for ${shop}:`, error);
+        res.status(500).send("Could not fetch products.");
+    }
+});
+
 
 // Middleware to verify Shopify webhooks
 const verifyShopifyWebhook = (req, res, next) => {
@@ -344,13 +364,27 @@ const verifyShopifyWebhook = (req, res, next) => {
     if (!hmac) {
         return res.status(401).send('HMAC signature is missing');
     }
+    
+    // express.raw({type: 'application/json'}) should make req.body a buffer
+    const rawBody = req.body;
 
     const genHash = crypto
         .createHmac('sha256', apiSecret)
-        .update(req.rawBody, 'utf8')
+        .update(rawBody)
         .digest('base64');
+    
+    let providedHmac;
+    try {
+        providedHmac = Buffer.from(hmac, 'base64');
+    } catch(e) {
+        return res.status(401).send('Invalid HMAC format');
+    }
+    
+    const generatedHash = Buffer.from(genHash, 'base64');
 
-    if (crypto.timingSafeEqual(Buffer.from(hmac, 'base64'), Buffer.from(genHash, 'base64'))) {
+    if (crypto.timingSafeEqual(providedHmac, generatedHash)) {
+        // HMAC is valid, parse body and move on
+        req.body = JSON.parse(rawBody.toString('utf8'));
         next();
     } else {
         res.status(401).send('HMAC signature is invalid');
@@ -360,7 +394,7 @@ const verifyShopifyWebhook = (req, res, next) => {
 
 app.post("/webhooks/products/create", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
     const shop = req.get('X-Shopify-Shop-Domain');
-    const product = JSON.parse(req.body.toString());
+    const product = req.body;
     const productId = product.id.toString();
 
     try {
@@ -376,7 +410,7 @@ app.post("/webhooks/products/create", express.raw({type: 'application/json'}), v
 
 app.post("/webhooks/products/update", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
     const shop = req.get('X-Shopify-Shop-Domain');
-    const product = JSON.parse(req.body.toString());
+    const product = req.body;
     const productId = product.id.toString();
 
     try {
@@ -392,7 +426,7 @@ app.post("/webhooks/products/update", express.raw({type: 'application/json'}), v
 
 app.post("/webhooks/products/delete", express.raw({type: 'application/json'}), verifyShopifyWebhook, async (req, res) => {
     const shop = req.get('X-Shopify-Shop-Domain');
-    const { id } = JSON.parse(req.body.toString());
+    const { id } = req.body;
     const productId = id.toString();
     
     try {
@@ -408,5 +442,3 @@ app.post("/webhooks/products/delete", express.raw({type: 'application/json'}), v
 
 
 exports.api = functions.https.onRequest(app);
-
-    
