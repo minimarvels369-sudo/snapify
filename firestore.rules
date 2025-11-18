@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Shops: Only authenticated users can access their own shop data.
+    match /shops/{shopId} {
+      allow read, write: if request.auth.uid == shopId;
+    }
+
+    // Generated Images: Users can only access images associated with their shop.
+    match /generated_images/{imageId} {
+      allow read: if get(/databases/$(database)/documents/shops/$(request.auth.uid)).data.shopId == resource.data.shopId;
+      allow create: if request.auth.uid != null;
+    }
+
+    // Transactions: Users can only access transactions associated with their shop.
+    match /transactions/{transactionId} {
+      allow read: if get(/databases/$(database)/documents/shops/$(request.auth.uid)).data.shopId == resource.data.shopId;
+    }
+
+    // Subscriptions: Users can only access subscriptions associated with their shop.
+    match /subscriptions/{subscriptionId} {
+      allow read: if get(/databases/$(database)/documents/shops/$(request.auth.uid)).data.shopId == resource.data.shopId;
+    }
+  }
+}
