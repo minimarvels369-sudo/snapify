@@ -1,3 +1,4 @@
+
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const express = require("express");
@@ -24,7 +25,7 @@ app.use((req, res, next) => {
 // IMPORTANT: Set these in your .env file
 const apiKey = process.env.NEXT_PUBLIC_SHOPIFY_API_KEY;
 const apiSecret = process.env.SHOPIFY_API_SECRET;
-const appName = process.env.APP_NAME;
+const appName = process.env.APP_NAME || 'snapify';
 
 const scopes = "read_products,write_products,read_product_listings,write_product_listings";
 
@@ -35,7 +36,11 @@ const scopes = "read_products,write_products,read_product_listings,write_product
 function getFunctionsBaseUrl() {
     const region = process.env.FUNCTION_REGION || 'us-central1';
     const projectId = process.env.GCLOUD_PROJECT;
-    return `https://{region}-{projectId}.cloudfunctions.net/api`;
+    if (!projectId) {
+        console.error("GCLOUD_PROJECT not set, cannot determine function URL");
+        return `https://[REGION]-[PROJECT_ID].cloudfunctions.net/api`;
+    }
+    return `https://${region}-${projectId}.cloudfunctions.net/api`;
 }
 
 /**
@@ -50,7 +55,7 @@ app.post("/auth", (req, res) => {
   }
 
   const state = crypto.randomBytes(16).toString("hex");
-  const redirectUri = `${getFunctionsBaseUrl().replace('{region}', process.env.FUNCTION_REGION || 'us-central1').replace('{projectId}', process.env.GCLOUD_PROJECT)}/auth/callback`;
+  const redirectUri = `${getFunctionsBaseUrl()}/auth/callback`;
 
   // Store the nonce in Firestore for later verification
   db.collection("shops").doc(shop).set({ state }, { merge: true })
@@ -130,6 +135,9 @@ app.get("/auth/callback", async (req, res) => {
     
     // 6. Get the host to redirect to the embedded app
     const host = req.query.host;
+    if (!host) {
+        return res.status(400).send("Host parameter is missing. Cannot redirect.");
+    }
     const encodedHost = Buffer.from(host, 'utf-8').toString('base64');
     
     // Redirect to the app's root in Shopify admin
@@ -151,7 +159,7 @@ async function registerWebhooks(shopDomain, accessToken) {
         accessToken: accessToken,
     });
 
-    const baseUrl = getFunctionsBaseUrl().replace('{region}', process.env.FUNCTION_REGION || 'us-central1').replace('{projectId}', process.env.GCLOUD_PROJECT);
+    const baseUrl = getFunctionsBaseUrl();
     const webhookTopics = [
         { topic: 'products/create', address: `${baseUrl}/webhooks/products/create` },
         { topic: 'products/update', address: `${baseUrl}/webhooks/products/update` },
@@ -268,6 +276,7 @@ query getProducts($first: Int!, $after: String) {
     }
     pageInfo {
       hasNextPage
+      endCursor
     }
   }
 }`;
@@ -281,7 +290,10 @@ query getProducts($first: Int!, $after: String) {
 async function fetchAllProducts(shopify, cursor = null) {
     try {
         const response = await shopify.graphql(productsQuery, { first: 250, after: cursor });
-        const products = response.products.edges.map(edge => edge.node);
+        const products = response.products.edges.map(edge => ({
+            ...edge.node,
+            // Keep description in descriptionHtml for consistency
+        }));
 
         if (response.products.pageInfo.hasNextPage) {
             const lastCursor = response.products.edges[response.products.edges.length - 1].cursor;
@@ -293,7 +305,7 @@ async function fetchAllProducts(shopify, cursor = null) {
             return products;
         }
     } catch (error) {
-        console.error('Error fetching products from Shopify:', error);
+        console.error('Error fetching products from Shopify:', error.response ? error.response.body : error);
         // Implement retry logic or better error logging here
         throw new functions.https.HttpsError('internal', 'Failed to fetch products from Shopify', error);
     }
@@ -384,8 +396,13 @@ const verifyShopifyWebhook = (req, res, next) => {
 
     if (crypto.timingSafeEqual(providedHmac, generatedHash)) {
         // HMAC is valid, parse body and move on
-        req.body = JSON.parse(rawBody.toString('utf8'));
-        next();
+        try {
+          req.body = JSON.parse(rawBody.toString('utf8'));
+          next();
+        } catch (e) {
+          console.error("Error parsing webhook body:", e);
+          res.status(400).send("Invalid JSON body.");
+        }
     } else {
         res.status(401).send('HMAC signature is invalid');
     }
