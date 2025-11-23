@@ -369,6 +369,35 @@ app.get("/products", async (req, res) => {
     }
 });
 
+/**
+ * Route: /api/products/:productId
+ * Description: Fetches a single product for a shop from Firestore.
+ */
+app.get("/products/:productId", async (req, res) => {
+    const { shop } = req.query;
+    const { productId } = req.params;
+
+    if (!shop) {
+        return res.status(400).send("Missing shop parameter.");
+    }
+    if (!productId) {
+        return res.status(400).send("Missing product ID parameter.");
+    }
+
+    try {
+        const productRef = db.collection('shops').doc(shop).collection('products').doc(productId);
+        const doc = await productRef.get();
+        if (!doc.exists) {
+            return res.status(404).json({ message: "Product not found." });
+        }
+        // Return the product data, combining the ID and the rest of the data
+        res.status(200).json({ product: { id: doc.id, ...doc.data() } });
+    } catch (error) {
+        console.error(`Error fetching product ${productId} from Firestore for ${shop}:`, error);
+        res.status(500).send("Could not fetch product.");
+    }
+});
+
 
 // Middleware to verify Shopify webhooks
 const verifyShopifyWebhook = (req, res, next) => {

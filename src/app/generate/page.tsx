@@ -1,7 +1,7 @@
-
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Image from "next/image";
 import {
   Bot,
@@ -10,6 +10,8 @@ import {
   Clipboard,
   Sparkles,
   Upload,
+  ArrowLeft,
+  Loader
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import Link from 'next/link';
 import {
   summarizeProductDescription,
   SummarizeProductDescriptionOutput,
@@ -43,14 +46,33 @@ import {
   suggestImageEnhancements,
   SuggestImageEnhancementsOutput,
 } from "@/ai/flows/suggest-image-enhancements";
-import { PlaceHolderImages } from "@/lib/placeholder-images";
 import { generateProductImageFromPrompt } from "@/ai/flows/generate-product-image-from-prompt";
 
-export default function GeneratePage() {
+// Define a type for our product data to use in the component
+interface Product {
+  id: string;
+  title: string;
+  descriptionHtml: string;
+  images: {
+    edges: {
+      node: {
+        url: string;
+        altText: string | null;
+      };
+    }[];
+  };
+}
+
+function GenerateImagePage() {
   const { toast } = useToast();
-  const [description, setDescription] = useState(
-    "A classic white cotton t-shirt, crew neck, short sleeves, relaxed fit. Perfect for casual wear."
-  );
+  const searchParams = useSearchParams();
+  const productId = searchParams.get("product_id");
+  const shop = searchParams.get("shop");
+
+  // State for the component
+  const [product, setProduct] = useState<Product | null>(null);
+  const [isLoadingProduct, setIsLoadingProduct] = useState(true);
+  const [description, setDescription] = useState("");
   const [prompt, setPrompt] = useState("");
   const [enhancements, setEnhancements] = useState<string[]>([]);
   const [suggestedEnhancements, setSuggestedEnhancements] = useState<string[]>([]);
@@ -59,13 +81,42 @@ export default function GeneratePage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
 
-  const originalImage = PlaceHolderImages.find(img => img.id === 'gen-9');
+  const originalImage = product?.images.edges[0]?.node;
+
+  // Fetch product data on component mount
+  useEffect(() => {
+    if (productId && shop) {
+      setIsLoadingProduct(true);
+      fetch(`/api/products/${productId}?shop=${shop}`)
+        .then(res => {
+            if (!res.ok) {
+                throw new Error('Product not found or error fetching data.');
+            }
+            return res.json();
+        })
+        .then(data => {
+          setProduct(data.product);
+          // Strip HTML tags for a cleaner default description
+          const cleanDescription = data.product.descriptionHtml.replace(/<[^>]*>?/gm, '');
+          setDescription(cleanDescription);
+        })
+        .catch(error => {
+          console.error("Failed to fetch product:", error);
+          toast({ 
+              title: "Error", 
+              description: error.message, 
+              variant: 'destructive' 
+            });
+        })
+        .finally(() => setIsLoadingProduct(false));
+    }
+  }, [productId, shop, toast]);
 
   const handleSuggestEnhancements = async () => {
     setIsSuggesting(true);
     try {
       const result: SuggestImageEnhancementsOutput = await suggestImageEnhancements({
-        clothingType: "t-shirt", // This would be dynamic in a real app
+        clothingType: "t-shirt", // This could be dynamic in a real app
         clothingStyle: "casual",
       });
       setSuggestedEnhancements(result.suggestedEnhancements);
@@ -124,7 +175,7 @@ export default function GeneratePage() {
     setIsGenerating(true);
     setGeneratedImage(null);
     try {
-      const { imageUrl } = await generateProductImageFromPrompt({ prompt, imageUrl: originalImage?.imageUrl });
+      const { imageUrl } = await generateProductImageFromPrompt({ prompt, imageUrl: originalImage?.url });
       setGeneratedImage(imageUrl);
       toast({ title: 'Image Generated!', description: 'Your new product image is ready.' });
     } catch (error) {
@@ -141,15 +192,42 @@ export default function GeneratePage() {
     );
   };
 
+  // Render a loading state while fetching product data
+  if (isLoadingProduct) {
+    return (
+        <div className="flex flex-1 items-center justify-center">
+            <Loader className="animate-spin h-8 w-8 text-muted-foreground" />
+        </div>
+    );
+  }
+  
+  // Render an error/not found state if the product couldn't be loaded
+  if (!product) {
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4">
+            <h2 className="text-2xl font-bold">Product Not Found</h2>
+            <p className="text-muted-foreground">We couldn't find the product you're looking for.</p>
+             <Button asChild>
+                <Link href={`/?shop=${shop}`}><ArrowLeft className="mr-2 h-4 w-4"/>Back to Products</Link>
+            </Button>
+        </div>
+      )
+  }
+
   return (
     <div className="grid flex-1 auto-rows-max gap-4 lg:grid-cols-3">
       {/* Left Column: Form */}
       <div className="grid auto-rows-max items-start gap-4 lg:col-span-2">
+         <div className="mb-4">
+            <Button asChild variant="outline">
+                <Link href={`/?shop=${shop}`}><ArrowLeft className="mr-2 h-4 w-4"/>Back to Products</Link>
+            </Button>
+        </div>
         <Card>
           <CardHeader>
             <CardTitle className="font-headline">Product Details</CardTitle>
             <CardDescription>
-              Describe your product to generate an AI-powered prompt.
+              Generating image for: <span className="font-semibold text-primary">{product.title}</span>
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -161,6 +239,7 @@ export default function GeneratePage() {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="min-h-32"
+                  placeholder="Enter or generate a description for the AI..."
                 />
               </div>
               <Button onClick={handleSummarize} disabled={isLoadingSummary || !description}>
@@ -263,7 +342,7 @@ export default function GeneratePage() {
 
       {/* Right Column: Image Preview */}
       <div className="grid auto-rows-max items-start gap-4 lg:col-span-1">
-        <Card className="overflow-hidden">
+        <Card className="overflow-hidden mt-[52px]">
           <CardHeader>
             <CardTitle className="font-headline">Image Preview</CardTitle>
             <CardDescription>
@@ -277,16 +356,15 @@ export default function GeneratePage() {
                 <div className="relative aspect-square w-full overflow-hidden rounded-md border">
                   {originalImage ? (
                     <Image
-                      alt="Original product"
-                      src={originalImage.imageUrl}
+                      alt={originalImage.altText || product.title}
+                      src={originalImage.url}
                       fill
                       className="object-cover"
-                      data-ai-hint={originalImage.imageHint}
                     />
                   ) : (
                     <div className="flex h-full w-full flex-col items-center justify-center bg-muted">
                         <Upload className="h-10 w-10 text-muted-foreground" />
-                        <p className="text-sm text-muted-foreground mt-2">Upload an image</p>
+                        <p className="text-sm text-muted-foreground mt-2">No primary image.</p>
                     </div>
                   )}
                 </div>
@@ -302,7 +380,6 @@ export default function GeneratePage() {
                         src={generatedImage}
                         fill
                         className="object-cover"
-                        data-ai-hint="fashion model"
                         />
                     </div>
                  ) : (
@@ -322,4 +399,11 @@ export default function GeneratePage() {
   );
 }
 
-    
+// We need to wrap the component in Suspense because useSearchParams() requires it for Client Components.
+export default function GeneratePage() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader className="animate-spin" /></div>}>
+            <GenerateImagePage />
+        </Suspense>
+    )
+}
