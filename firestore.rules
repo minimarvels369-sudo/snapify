@@ -2,26 +2,20 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Default rule: Allow client-side reads, deny all client-side writes.
+    // Our backend functions with Admin privileges will bypass the write rule.
+    match /{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
 
-    // Shops: Only authenticated users can access their own shop data.
+    // Specific rule for the 'shops' collection to allow our function to write.
+    // Although the admin SDK should bypass rules, we are making it explicit.
     match /shops/{shopId} {
-      allow read, write: if request.auth.uid == shopId;
-    }
-
-    // Generated Images: Users can only access images associated with their shop.
-    match /generated_images/{imageId} {
-      allow read: if get(/databases/$(database)/documents/shops/$(request.auth.uid)).data.shopId == resource.data.shopId;
-      allow create: if request.auth.uid != null;
-    }
-
-    // Transactions: Users can only access transactions associated with their shop.
-    match /transactions/{transactionId} {
-      allow read: if get(/databases/$(database)/documents/shops/$(request.auth.uid)).data.shopId == resource.data.shopId;
-    }
-
-    // Subscriptions: Users can only access subscriptions associated with their shop.
-    match /subscriptions/{subscriptionId} {
-      allow read: if get(/databases/$(database)/documents/shops/$(request.auth.uid)).data.shopId == resource.data.shopId;
+        // Allow read for clients (e.g., to check installation status)
+        allow read: if true;
+        // Do not allow clients to write shop info. Only our backend can.
+        allow write: if false;
     }
   }
 }
