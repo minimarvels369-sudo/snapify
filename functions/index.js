@@ -317,31 +317,46 @@ async function fetchAllProducts(shopify, cursor = null) {
  */
 app.post("/products/sync", async (req, res) => {
     const { shop } = req.body;
+    
+    // التأكد من وجود اسم المتجر
     if (!shop) {
-        return res.status(400).send("Missing shop parameter.");
+        return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
 
     try {
         const shopify = await getShopifyClient(shop);
         const products = await fetchAllProducts(shopify);
         
+        if (!products || products.length === 0) {
+             return res.status(200).json({ success: true, message: "No products found in Shopify." });
+        }
+
         const batch = db.batch();
         products.forEach(product => {
-            const productId = product.id.split('/').pop();
+            // التأكد من أن الـ ID string
+            const productId = String(product.id).split('/').pop();
             const productRef = db.collection('shops').doc(shop).collection('products').doc(productId);
             batch.set(productRef, product, { merge: true });
         });
+        
         await batch.commit();
 
-        // Update a timestamp to indicate the last sync time
         await db.collection('shops').doc(shop).update({
             productsSyncedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        res.status(200).json({ success: true, message: `Synced ${products.length} products.` });
+        // الرد الناجح بصيغة JSON
+        res.status(200).json({ success: true, message: `Synced ${products.length} products successfully.` });
+
     } catch (error) {
         console.error("Error syncing products:", error);
-        res.status(500).send(`Error syncing products: ${error.message}`);
+        
+        // === هنا كان سبب المشكلة ===
+        // تم التغيير من send إلى json ليفهمها التطبيق
+        res.status(500).json({ 
+            success: false, 
+            message: error.message || "Internal Server Error during sync" 
+        });
     }
 });
 
