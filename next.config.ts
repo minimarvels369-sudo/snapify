@@ -1,7 +1,14 @@
-import type {NextConfig} from 'next';
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'https://api-iiewd7uyda-uc.a.run.app/:path*',
+      },
+    ];
+  },
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -25,6 +32,12 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'picsum.photos',
+        port: '',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'cdn.shopify.com',
         port: '',
         pathname: '/**',
       },
