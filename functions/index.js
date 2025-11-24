@@ -233,7 +233,7 @@ app.post("/auth/verify", async (req, res) => {
 async function getShopifyClient(shopDomain) {
     const shopDoc = await db.collection('shops').doc(shopDomain).get();
     if (!shopDoc.exists || !shopDoc.data().accessToken) {
-        throw new functions.https.HttpsError('not-found', 'Shop not found or access token missing.');
+        throw new Error('Shop not found or access token missing.');
     }
     const { accessToken } = shopDoc.data();
     return new Shopify({
@@ -307,7 +307,7 @@ async function fetchAllProducts(shopify, cursor = null) {
     } catch (error) {
         console.error('Error fetching products from Shopify:', error.response ? error.response.body : error);
         // Implement retry logic or better error logging here
-        throw new functions.https.HttpsError('internal', 'Failed to fetch products from Shopify', error);
+        throw new Error('Failed to fetch products from Shopify');
     }
 }
 
