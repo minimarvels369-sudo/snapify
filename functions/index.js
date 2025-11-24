@@ -1,4 +1,4 @@
-// DIAGNOSTIC BUILD V6 - Switched to functions.config()
+// DIAGNOSTIC BUILD V7 - Switched /auth to GET and redirect
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const express = require("express");
@@ -29,56 +29,63 @@ function getFunctionsBaseUrl() {
     const region = process.env.FUNCTION_REGION || 'us-central1';
     const projectId = process.env.GCLOUD_PROJECT;
     if (!projectId) {
-        console.error("V6_LOG: GCLOUD_PROJECT not set");
+        console.error("V7_LOG: GCLOUD_PROJECT not set");
         return `https://[REGION]-[PROJECT_ID].cloudfunctions.net/api`;
     }
     return `https://${region}-${projectId}.cloudfunctions.net/api`;
 }
 
-app.post("/auth", (req, res) => {
-  console.log("V6_LOG: /auth started.");
-  const { shop } = req.body;
+// CRITICAL FIX: Changed to GET to handle direct installation from Shopify admin
+app.get("/auth", (req, res) => {
+  console.log("V7_LOG: /auth (GET) started.");
+  
+  // Data comes from query params now, not body
+  const { shop } = req.query; 
+
   if (!shop) {
-    console.error("V6_LOG: /auth failed - Missing shop.");
+    console.error("V7_LOG: /auth failed - Missing shop query param.");
     return res.status(400).send("Missing shop parameter.");
   }
 
   // Check if secrets are loaded
   if (!apiKey || !apiSecret) {
-      console.error("V6_LOG: /auth - Shopify API key or secret is not configured on Firebase.");
+      console.error("V7_LOG: /auth - Shopify API key or secret is not configured on Firebase.");
       return res.status(500).send("Server configuration error: App secrets are not set.");
   }
 
   const state = crypto.randomBytes(16).toString("hex");
   const redirectUri = `${getFunctionsBaseUrl()}/auth/callback`;
   
-  console.log(`V6_LOG: /auth - Storing state for ${shop}`);
+  console.log(`V7_LOG: /auth - Storing state for ${shop}`);
   db.collection("shops").doc(shop).set({ state }, { merge: true })
     .then(() => {
-      const installUrl = `https://{shop}.myshopify.com/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${redirectUri}`;
-      console.log(`V6_LOG: /auth - State stored. Redirecting.`);
-      res.json({ installUrl: installUrl.replace('{shop}', shop) });
+      const installUrl = `https://${shop}.myshopify.com/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${redirectUri}`;
+      console.log(`V7_LOG: /auth - State stored. Redirecting user to install URL.`);
+      
+      // This is the key change: Redirect the user's browser directly.
+      res.redirect(installUrl);
     })
     .catch(error => {
-      console.error("V6_LOG: /auth - Firestore error storing state:", error);
+      console.error("V7_LOG: /auth - Firestore error storing state:", error);
       res.status(500).send("Error initiating authentication.");
     });
 });
 
+
 app.get("/auth/callback", async (req, res) => {
-  console.log("V6_LOG: /auth/callback started.");
+  console.log("V7_LOG: /auth/callback started.");
   const { shop, hmac, code, state } = req.query;
 
   if (!shop || !hmac || !code || !state) {
-    console.error("V6_LOG: /auth/callback - Missing params.", { shop, hmac, code, state });
+    console.error("V7_LOG: /auth/callback - Missing params.", { shop, hmac, code, state });
     return res.status(400).send("Required parameters are missing.");
   }
   
   if (!apiSecret) {
-      console.error("V6_LOG: /auth/callback - CRITICAL: SHOPIFY_API_SECRET is not loaded!");
+      console.error("V7_LOG: /auth/callback - CRITICAL: SHOPIFY_API_SECRET is not loaded!");
       return res.status(500).send("Server configuration error.");
   }
-  console.log(`V6_LOG: /auth/callback - Received callback for shop: ${shop}`);
+  console.log(`V7_LOG: /auth/callback - Received callback for shop: ${shop}`);
 
   // 1. HMAC Validation
   const map = { ...req.query };
@@ -87,54 +94,59 @@ app.get("/auth/callback", async (req, res) => {
   const generatedHmac = crypto.createHmac('sha256', apiSecret).update(message).digest('hex');
 
   if (generatedHmac !== hmac) {
-      console.error("V6_LOG: /auth/callback - HMAC validation failed. Secret might be wrong.");
+      console.error("V7_LOG: /auth/callback - HMAC validation failed. Secret might be wrong.");
       return res.status(400).send("HMAC validation failed.");
   }
-  console.log("V6_LOG: /auth/callback - HMAC validation successful.");
+  console.log("V7_LOG: /auth/callback - HMAC validation successful.");
   
   // 2. Nonce Verification
   try {
-    console.log(`V6_LOG: /auth/callback - Verifying nonce for ${shop}`);
+    console.log(`V7_LOG: /auth/callback - Verifying nonce for ${shop}`);
     const shopDoc = await db.collection("shops").doc(shop).get();
     if (!shopDoc.exists || shopDoc.data().state !== state) {
-        console.error(`V6_LOG: /auth/callback - Nonce verification failed.`);
+        console.error(`V7_LOG: /auth/callback - Nonce verification failed.`);
         return res.status(403).send("Request origin cannot be verified.");
     }
-    console.log("V6_LOG: /auth/callback - Nonce verification successful.");
+    console.log("V7_LOG: /auth/callback - Nonce verification successful.");
   } catch (error) {
-    console.error("V6_LOG: /auth/callback - Firestore error on nonce verification:", error);
+    console.error("V7_LOG: /auth/callback - Firestore error on nonce verification:", error);
     return res.status(500).send("Error during nonce verification.");
   }
 
   // 3. Exchange for Access Token and Store
   const shopify = new Shopify({ shopName: shop, apiKey: apiKey, apiSecret: apiSecret });
   try {
-    console.log("V6_LOG: /auth/callback - Exchanging code for access token.");
+    console.log("V7_LOG: /auth/callback - Exchanging code for access token.");
     const accessToken = await shopify.exchange_temporary_code({ code });
-    console.log("V6_LOG: /auth/callback - Access token obtained.");
+    console.log("V7_LOG: /auth/callback - Access token obtained.");
 
-    console.log("V6_LOG: /auth/callback - Storing shop data in Firestore.");
+    console.log("V7_LOG: /auth/callback - Storing shop data in Firestore.");
     await db.collection("shops").doc(shop).set({
       shopDomain: shop,
       accessToken: accessToken,
       isActive: true,
       // ... other fields
     }, { merge: true });
-    console.log("V6_LOG: /auth/callback - SUCCESS: Shop data stored in Firestore.");
+    console.log("V7_LOG: /auth/callback - SUCCESS: Shop data stored in Firestore.");
 
     // Final Redirect
     const host = req.query.host;
     if (!host) {
-        console.error("V6_LOG: /auth/callback - Host param missing.");
-        return res.status(400).send("Host parameter is missing.");
+        console.error("V7_LOG: /auth/callback - Host param missing.");
+        // This is not a fatal error for the install, but good to log.
+        // Redirect to the app's main page in Shopify admin
+         const redirectUrl = `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}`
+         console.log(`V7_LOG: /auth/callback - Host missing, redirecting to app root.`);
+         res.redirect(redirectUrl);
+         return;
     }
     const encodedHost = Buffer.from(host, 'utf-8').toString('base64');
     const redirectUrl = `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}?shop=${shop}&host=${encodedHost}`;
-    console.log(`V6_LOG: /auth/callback - Redirecting to app.`);
+    console.log(`V7_LOG: /auth/callback - Redirecting to app with host.`);
     res.redirect(redirectUrl);
 
   } catch (error) {
-    console.error("V6_LOG: /auth/callback - CRITICAL ERROR during token exchange or Firestore write:", error);
+    console.error("V7_LOG: /auth/callback - CRITICAL ERROR during token exchange or Firestore write:", error);
     res.status(500).send(error.message || "An error occurred during the final step.");
   }
 });
