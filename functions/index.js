@@ -280,5 +280,3 @@ app.get("/products", async (req, res) => {
 
 
 exports.api = functions.https.onRequest(app);
-
-// Trigger redeploy to apply secret permissions
