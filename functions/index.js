@@ -1,4 +1,4 @@
-// FINAL BUILD V9 - Hardcoded the correct redirect URL
+// FINAL BUILD V10 - Corrected the Shopify install URL generation
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const express = require("express");
@@ -32,11 +32,11 @@ function getFunctionsBaseUrl() {
 }
 
 app.get("/auth", (req, res) => {
-  console.log("V9_LOG: /auth (GET) started.");
+  console.log("V10_LOG: /auth (GET) started.");
   const { shop } = req.query;
 
   if (!shop) {
-    console.error("V9_LOG: /auth failed - Missing shop query param.");
+    console.error("V10_LOG: /auth failed - Missing shop query param.");
     return res.status(400).send("Missing shop parameter.");
   }
 
@@ -44,45 +44,46 @@ app.get("/auth", (req, res) => {
   const apiSecret = shopifyApiSecret.value();
 
   if (!apiKey || !apiSecret) {
-      console.error("V9_LOG: /auth - Shopify API key or secret is not configured in .env file.");
+      console.error("V10_LOG: /auth - Shopify API key or secret is not configured in .env file.");
       return res.status(500).send("Server configuration error: App secrets are not set.");
   }
 
   const state = crypto.randomBytes(16).toString("hex");
   const redirectUri = `${getFunctionsBaseUrl()}/auth/callback`;
-  console.log(`V9_LOG: Using redirect URI: ${redirectUri}`); // Log the generated URI
+  console.log(`V10_LOG: Using redirect URI: ${redirectUri}`);
   
-  console.log(`V9_LOG: /auth - Storing state for ${shop}`);
+  console.log(`V10_LOG: /auth - Storing state for ${shop}`);
   db.collection("shops").doc(shop).set({ state }, { merge: true })
     .then(() => {
-      const installUrl = `https://${shop}.myshopify.com/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${redirectUri}`;
-      console.log(`V9_LOG: /auth - State stored. Redirecting user to install URL.`);
+      // **FIXED**: The 'shop' parameter already contains '.myshopify.com'. Do not add it again.
+      const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${redirectUri}`;
+      console.log(`V10_LOG: /auth - State stored. Redirecting user to correct install URL: ${installUrl}`);
       res.redirect(installUrl);
     })
     .catch(error => {
-      console.error("V9_LOG: /auth - Firestore error storing state:", error);
+      console.error("V10_LOG: /auth - Firestore error storing state:", error);
       res.status(500).send("Error initiating authentication.");
     });
 });
 
 
 app.get("/auth/callback", async (req, res) => {
-  console.log("V9_LOG: /auth/callback execution started.");
+  console.log("V10_LOG: /auth/callback execution started.");
   const { shop, hmac, code, state } = req.query;
 
-  console.log("V9_LOG: Received query params:", JSON.stringify(req.query));
+  console.log("V10_LOG: Received query params:", JSON.stringify(req.query));
 
   if (!shop || !hmac || !code || !state) {
-    console.error("V9_LOG: CRITICAL - A required query parameter is missing. Aborting.");
+    console.error("V10_LOG: CRITICAL - A required query parameter is missing. Aborting.");
     return res.status(400).send("Required parameters are missing.");
   }
 
   const apiSecret = shopifyApiSecret.value();
   if (!apiSecret) {
-      console.error("V9_LOG: CRITICAL - SHOPIFY_API_SECRET is not loaded from .env! Aborting.");
+      console.error("V10_LOG: CRITICAL - SHOPIFY_API_SECRET is not loaded from .env! Aborting.");
       return res.status(500).send("Server configuration error.");
   }
-  console.log("V9_LOG: API Secret is loaded.");
+  console.log("V10_LOG: API Secret is loaded.");
 
   // 1. HMAC Validation
   const map = { ...req.query };
@@ -91,21 +92,21 @@ app.get("/auth/callback", async (req, res) => {
   const generatedHmac = crypto.createHmac('sha256', apiSecret).update(message).digest('hex');
 
   if (generatedHmac !== hmac) {
-      console.error("V9_LOG: CRITICAL - HMAC validation FAILED.");
+      console.error("V10_LOG: CRITICAL - HMAC validation FAILED.");
       return res.status(400).send("HMAC validation failed.");
   }
-  console.log("V9_LOG: HMAC validation successful.");
+  console.log("V10_LOG: HMAC validation successful.");
   
   // 2. Nonce Verification
   try {
     const shopDoc = await db.collection("shops").doc(shop).get();
     if (!shopDoc.exists || shopDoc.data().state !== state) {
-        console.error(`V9_LOG: CRITICAL - Nonce verification FAILED.`);
+        console.error(`V10_LOG: CRITICAL - Nonce verification FAILED.`);
         return res.status(403).send("Request origin cannot be verified.");
     }
-    console.log("V9_LOG: Nonce verification successful.");
+    console.log("V10_LOG: Nonce verification successful.");
   } catch (error) {
-    console.error("V9_LOG: CRITICAL - A Firestore error occurred during Nonce verification. Aborting.", error);
+    console.error("V10_LOG: CRITICAL - A Firestore error occurred during Nonce verification. Aborting.", error);
     return res.status(500).send("Error during nonce verification.");
   }
   
@@ -115,7 +116,7 @@ app.get("/auth/callback", async (req, res) => {
 
   try {
     const accessToken = await shopify.exchange_temporary_code({ code });
-    console.log("V9_LOG: Access token exchange successful.");
+    console.log("V10_LOG: Access token exchange successful.");
 
     const shopData = {
       shopDomain: shop,
@@ -125,7 +126,7 @@ app.get("/auth/callback", async (req, res) => {
     };
 
     await db.collection("shops").doc(shop).set(shopData, { merge: true });
-    console.log("V9_LOG: SUCCESS! Shop data has been written to Firestore successfully.");
+    console.log("V10_LOG: SUCCESS! Shop data has been written to Firestore successfully.");
 
     // Final Redirect
     const host = req.query.host;
@@ -139,9 +140,9 @@ app.get("/auth/callback", async (req, res) => {
     res.redirect(redirectUrl);
 
   } catch (error) {
-    console.error("V9_LOG: CRITICAL - An error occurred during the final stage.", error);
+    console.error("V10_LOG: CRITICAL - An error occurred during the final stage.", error);
     if (error.response && error.response.body) {
-        console.error("V9_LOG: Detailed error from Shopify:", JSON.stringify(error.response.body, null, 2));
+        console.error("V10_LOG: Detailed error from Shopify:", JSON.stringify(error.response.body, null, 2));
     }
     res.status(500).send(error.message || "An error occurred during the final step.");
   }
