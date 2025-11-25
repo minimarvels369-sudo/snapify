@@ -1,4 +1,4 @@
-// FINAL BUILD V11 - Added Firestore error logging
+// FINAL BUILD V12 - Comprehensive error logging
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const express = require("express");
@@ -49,84 +49,93 @@ app.get("/auth", (req, res) => {
     });
 });
 
-
 app.get("/auth/callback", async (req, res) => {
-  const { shop, hmac, code, state } = req.query;
+    const { shop, hmac, code, state } = req.query;
 
-  if (!shop || !hmac || !code || !state) {
-    return res.status(400).send("Required parameters are missing.");
-  }
-
-  const apiSecret = shopifyApiSecret.value();
-  if (!apiSecret) {
-      const errorLog = {
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        shop: shop,
-        stage: 'get_api_secret',
-        message: "CRITICAL - SHOPIFY_API_SECRET is not loaded from .env! Aborting.",
-      };
-      await db.collection('logs').add(errorLog);
-      return res.status(500).send("Server configuration error.");
-  }
-
-  const map = { ...req.query };
-  delete map.hmac;
-  const message = new URLSearchParams(map).toString();
-  const generatedHmac = crypto.createHmac('sha256', apiSecret).update(message).digest('hex');
-
-  if (generatedHmac !== hmac) {
-      return res.status(400).send("HMAC validation failed.");
-  }
-  
-  try {
-    const shopDoc = await db.collection("shops").doc(shop).get();
-    if (!shopDoc.exists || shopDoc.data().state !== state) {
-        return res.status(403).send("Request origin cannot be verified.");
-    }
-  } catch (error) {
-    return res.status(500).send("Error during nonce verification.");
-  }
-  
-  const apiKey = shopifyApiKey.value();
-  const shopify = new Shopify({ shopName: shop, apiKey: apiKey, apiSecret: apiSecret });
-
-  try {
-    const accessToken = await shopify.exchange_temporary_code({ code });
-
-    const shopData = {
-      shopDomain: shop,
-      accessToken: accessToken,
-      isActive: true,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    const logError = async (stage, error, additional_info = {}) => {
+        const logEntry = {
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            shop: shop || 'unknown',
+            stage: stage,
+            message: error.message || 'An unknown error occurred.',
+            stack: error.stack || null,
+            requestQuery: req.query,
+            ...additional_info
+        };
+        try {
+            await db.collection('logs').add(logEntry);
+        } catch (dbError) {
+            console.error("!!! FAILED TO WRITE TO FIRESTORE LOGS !!!", dbError);
+        }
     };
 
-    await db.collection("shops").doc(shop).set(shopData, { merge: true });
-
-    const host = req.query.host;
-    if (!host) {
-        const redirectUrl = `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}`;
-         res.redirect(redirectUrl);
-         return;
+    if (!shop || !hmac || !code || !state) {
+        await logError('callback_params_check', new Error('A required query parameter is missing.'), { received_params: Object.keys(req.query) });
+        return res.status(400).send("Required parameters are missing.");
     }
-    const encodedHost = Buffer.from(host, 'utf-8').toString('base64');
-    const redirectUrl = `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}?shop=${shop}&host=${encodedHost}`;
-    res.redirect(redirectUrl);
 
-  } catch (error) {
-    // **** NEW Firestore Error Logging ****
-    const errorLog = {
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        shop: shop,
-        stage: 'exchange_temporary_code',
-        message: error.message,
-        stack: error.stack,
-        response: error.response ? error.response.body : 'No response body'
-    };
-    await db.collection('logs').add(errorLog);
-    // **** END of Logging ****
+    const apiSecret = shopifyApiSecret.value();
+    if (!apiSecret) {
+        await logError('get_api_secret', new Error('SHOPIFY_API_SECRET is not loaded from params!'));
+        return res.status(500).send("Server configuration error.");
+    }
 
-    res.status(500).send(error.message || "An error occurred during the final step.");
-  }
+    const map = { ...req.query };
+    delete map.hmac;
+    const message = new URLSearchParams(map).toString();
+    const generatedHmac = crypto.createHmac('sha256', apiSecret).update(message).digest('hex');
+
+    if (generatedHmac !== hmac) {
+        await logError('hmac_validation', new Error('HMAC validation failed.'), { generatedHmac, receivedHmac: hmac });
+        return res.status(400).send("HMAC validation failed.");
+    }
+
+    try {
+        const shopDoc = await db.collection("shops").doc(shop).get();
+        const storedState = shopDoc.exists ? shopDoc.data().state : null;
+
+        if (!storedState || storedState !== state) {
+            await logError('nonce_verification', new Error('Nonce verification failed: state mismatch.'), { storedState, receivedState: state });
+            return res.status(403).send("Request origin cannot be verified.");
+        }
+    } catch (error) {
+        await logError('nonce_firestore_error', error);
+        return res.status(500).send("Error during nonce verification.");
+    }
+
+    const apiKey = shopifyApiKey.value();
+    if (!apiKey) {
+        await logError('get_api_key', new Error('SHOPIFY_API_KEY is not loaded from params!'));
+        return res.status(500).send("Server configuration error.");
+    }
+    const shopify = new Shopify({ shopName: shop, apiKey: apiKey, apiSecret: apiSecret });
+
+    try {
+        const accessToken = await shopify.exchange_temporary_code({ code });
+
+        const shopData = {
+            shopDomain: shop,
+            accessToken: accessToken,
+            isActive: true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        await db.collection("shops").doc(shop).set(shopData, { merge: true });
+
+        const host = req.query.host;
+        if (!host) {
+            const redirectUrl = `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}`;
+            res.redirect(redirectUrl);
+            return;
+        }
+        const encodedHost = Buffer.from(host, 'utf-8').toString('base64');
+        const redirectUrl = `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}?shop=${shop}&host=${encodedHost}`;
+        res.redirect(redirectUrl);
+
+    } catch (error) {
+        await logError('exchange_temporary_code', error, { response: error.response ? error.response.body : 'No response body' });
+        res.status(500).send(error.message || "An error occurred during the final step.");
+    }
 });
 
 
