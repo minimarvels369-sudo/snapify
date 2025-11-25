@@ -1,4 +1,4 @@
-// FINAL BUILD V10 - Corrected the Shopify install URL generation
+// FINAL BUILD V11 - Added Firestore error logging
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const express = require("express");
@@ -26,97 +26,72 @@ const shopifyApiSecret = defineString("SHOPIFY_API_SECRET");
 const appName = 'snapify';
 const scopes = "read_products,write_products,read_product_listings,write_product_listings";
 
-// CORRECTED: Hardcode the known correct Gen 2 function URL.
 function getFunctionsBaseUrl() {
     return 'https://api-iiewd7uyda-uc.a.run.app';
 }
 
 app.get("/auth", (req, res) => {
-  console.log("V10_LOG: /auth (GET) started.");
   const { shop } = req.query;
-
   if (!shop) {
-    console.error("V10_LOG: /auth failed - Missing shop query param.");
     return res.status(400).send("Missing shop parameter.");
   }
-
   const apiKey = shopifyApiKey.value();
-  const apiSecret = shopifyApiSecret.value();
-
-  if (!apiKey || !apiSecret) {
-      console.error("V10_LOG: /auth - Shopify API key or secret is not configured in .env file.");
-      return res.status(500).send("Server configuration error: App secrets are not set.");
-  }
-
   const state = crypto.randomBytes(16).toString("hex");
   const redirectUri = `${getFunctionsBaseUrl()}/auth/callback`;
-  console.log(`V10_LOG: Using redirect URI: ${redirectUri}`);
-  
-  console.log(`V10_LOG: /auth - Storing state for ${shop}`);
   db.collection("shops").doc(shop).set({ state }, { merge: true })
     .then(() => {
-      // **FIXED**: The 'shop' parameter already contains '.myshopify.com'. Do not add it again.
       const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${redirectUri}`;
-      console.log(`V10_LOG: /auth - State stored. Redirecting user to correct install URL: ${installUrl}`);
       res.redirect(installUrl);
     })
     .catch(error => {
-      console.error("V10_LOG: /auth - Firestore error storing state:", error);
+      console.error("Firestore error storing state:", error);
       res.status(500).send("Error initiating authentication.");
     });
 });
 
 
 app.get("/auth/callback", async (req, res) => {
-  console.log("V10_LOG: /auth/callback execution started.");
   const { shop, hmac, code, state } = req.query;
 
-  console.log("V10_LOG: Received query params:", JSON.stringify(req.query));
-
   if (!shop || !hmac || !code || !state) {
-    console.error("V10_LOG: CRITICAL - A required query parameter is missing. Aborting.");
     return res.status(400).send("Required parameters are missing.");
   }
 
   const apiSecret = shopifyApiSecret.value();
   if (!apiSecret) {
-      console.error("V10_LOG: CRITICAL - SHOPIFY_API_SECRET is not loaded from .env! Aborting.");
+      const errorLog = {
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        shop: shop,
+        stage: 'get_api_secret',
+        message: "CRITICAL - SHOPIFY_API_SECRET is not loaded from .env! Aborting.",
+      };
+      await db.collection('logs').add(errorLog);
       return res.status(500).send("Server configuration error.");
   }
-  console.log("V10_LOG: API Secret is loaded.");
 
-  // 1. HMAC Validation
   const map = { ...req.query };
   delete map.hmac;
   const message = new URLSearchParams(map).toString();
   const generatedHmac = crypto.createHmac('sha256', apiSecret).update(message).digest('hex');
 
   if (generatedHmac !== hmac) {
-      console.error("V10_LOG: CRITICAL - HMAC validation FAILED.");
       return res.status(400).send("HMAC validation failed.");
   }
-  console.log("V10_LOG: HMAC validation successful.");
   
-  // 2. Nonce Verification
   try {
     const shopDoc = await db.collection("shops").doc(shop).get();
     if (!shopDoc.exists || shopDoc.data().state !== state) {
-        console.error(`V10_LOG: CRITICAL - Nonce verification FAILED.`);
         return res.status(403).send("Request origin cannot be verified.");
     }
-    console.log("V10_LOG: Nonce verification successful.");
   } catch (error) {
-    console.error("V10_LOG: CRITICAL - A Firestore error occurred during Nonce verification. Aborting.", error);
     return res.status(500).send("Error during nonce verification.");
   }
   
-  // 3. Exchange for Access Token and Store
   const apiKey = shopifyApiKey.value();
   const shopify = new Shopify({ shopName: shop, apiKey: apiKey, apiSecret: apiSecret });
 
   try {
     const accessToken = await shopify.exchange_temporary_code({ code });
-    console.log("V10_LOG: Access token exchange successful.");
 
     const shopData = {
       shopDomain: shop,
@@ -126,12 +101,10 @@ app.get("/auth/callback", async (req, res) => {
     };
 
     await db.collection("shops").doc(shop).set(shopData, { merge: true });
-    console.log("V10_LOG: SUCCESS! Shop data has been written to Firestore successfully.");
 
-    // Final Redirect
     const host = req.query.host;
     if (!host) {
-        const redirectUrl = `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}`
+        const redirectUrl = `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${appName}`;
          res.redirect(redirectUrl);
          return;
     }
@@ -140,16 +113,23 @@ app.get("/auth/callback", async (req, res) => {
     res.redirect(redirectUrl);
 
   } catch (error) {
-    console.error("V10_LOG: CRITICAL - An error occurred during the final stage.", error);
-    if (error.response && error.response.body) {
-        console.error("V10_LOG: Detailed error from Shopify:", JSON.stringify(error.response.body, null, 2));
-    }
+    // **** NEW Firestore Error Logging ****
+    const errorLog = {
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        shop: shop,
+        stage: 'exchange_temporary_code',
+        message: error.message,
+        stack: error.stack,
+        response: error.response ? error.response.body : 'No response body'
+    };
+    await db.collection('logs').add(errorLog);
+    // **** END of Logging ****
+
     res.status(500).send(error.message || "An error occurred during the final step.");
   }
 });
 
 
-// Helper function to get Shopify client, updated to use new param system
 async function getShopifyClient(shopDomain) {
     const shopDoc = await db.collection('shops').doc(shopDomain).get();
     if (!shopDoc.exists || !shopDoc.data().accessToken) {
