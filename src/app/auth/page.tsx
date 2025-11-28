@@ -17,56 +17,19 @@ function AuthComponent() {
     const shopParam = searchParams.get("shop");
     if (shopParam) {
       setShop(shopParam);
-      verifyAuthentication(shopParam);
     } else {
       setError("Shop parameter is missing. Please ensure you are opening this app from your Shopify Admin.");
     }
   }, [searchParams]);
 
-  const verifyAuthentication = async (shopDomain: string) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/auth/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shop: shopDomain }),
-      });
-      const data = await response.json();
-      if (data.authenticated) {
-        // App Bridge will handle the redirect within the iframe
-        // Just need to navigate to the relative path
-        router.push("/");
-      } else {
-        // If not authenticated, stay on this page to show the install button
-        setIsLoading(false);
-      }
-    } catch (err) {
-      setError("Failed to verify authentication. Please try again.");
-      setIsLoading(false);
-    }
-  };
-
-  const handleInstall = async () => {
+  const handleInstall = () => {
     if (!shop) {
         setError("Shop domain is not available.");
         return;
     }
-    setIsLoading(true);
-    try {
-      const response = await fetch("/api/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shop }),
-      });
-      if (!response.ok) throw new Error('Failed to get installation URL');
-      const { installUrl } = await response.json();
-      // Redirect the top-level window to the Shopify install URL
-      window.top!.location.href = installUrl;
-    } catch (err: any) {
-      setError(err.message || "Installation failed. Please try again.");
-      setIsLoading(false);
-    }
+    // The installation URL is now built on the server, so we redirect directly.
+    // The server-side /api/auth endpoint will handle the OAuth logic.
+    window.top!.location.href = `/api/auth?shop=${shop}`;
   };
 
   return (
@@ -75,7 +38,7 @@ function AuthComponent() {
         <CardHeader>
           <CardTitle className="font-headline">AI Fashion Studio</CardTitle>
           <CardDescription>
-            {isLoading ? "Verifying your shop..." : "Welcome! Please install the app to continue."}
+            Welcome! Please install the app to continue.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -85,7 +48,7 @@ function AuthComponent() {
               <Loader className="animate-spin" />
             </div>
           ) : (
-            <Button onClick={handleInstall} className="w-full" disabled={!shop}>
+            <Button onClick={handleInstall} className="w-full" disabled={!shop || isLoading}>
               Install App
             </Button>
           )}
