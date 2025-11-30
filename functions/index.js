@@ -1,4 +1,4 @@
-// FINAL BUILD V12 - Comprehensive error logging
+// FINAL BUILD V13 - Verify API Key on initial auth
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const express = require("express");
@@ -30,53 +30,63 @@ function getFunctionsBaseUrl() {
     return 'https://api-iiewd7uyda-uc.a.run.app';
 }
 
-app.get("/auth", (req, res) => {
+// **** NEW Logging Function ****
+const logError = async (stage, error, shop = 'unknown', additional_info = {}) => {
+    const logEntry = {
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        shop: shop,
+        stage: stage,
+        message: error.message || 'An unknown error occurred.',
+        stack: error.stack || null,
+        requestQuery: additional_info.requestQuery || null,
+        ...additional_info
+    };
+    try {
+        await db.collection('logs').add(logEntry);
+    } catch (dbError) {
+        console.error("!!! FAILED TO WRITE TO FIRESTORE LOGS !!!", dbError);
+    }
+};
+
+
+app.get("/auth", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
     return res.status(400).send("Missing shop parameter.");
   }
+
   const apiKey = shopifyApiKey.value();
+
+  // **** NEW API Key Check ****
+  if (!apiKey) {
+      await logError('initial_auth_get_api_key', new Error('CRITICAL - SHOPIFY_API_KEY is not loaded from params!'), shop, { requestQuery: req.query });
+      return res.status(500).send("Server configuration error: API Key is missing.");
+  }
+
   const state = crypto.randomBytes(16).toString("hex");
   const redirectUri = `${getFunctionsBaseUrl()}/auth/callback`;
-  db.collection("shops").doc(shop).set({ state }, { merge: true })
-    .then(() => {
-      const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${redirectUri}`;
-      res.redirect(installUrl);
-    })
-    .catch(error => {
-      console.error("Firestore error storing state:", error);
-      res.status(500).send("Error initiating authentication.");
-    });
+
+  try {
+    await db.collection("shops").doc(shop).set({ state }, { merge: true });
+    const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${redirectUri}`;
+    res.redirect(installUrl);
+  } catch (error) {
+    await logError('initial_auth_firestore_error', error, shop, { requestQuery: req.query });
+    res.status(500).send("Error initiating authentication.");
+  }
 });
 
 app.get("/auth/callback", async (req, res) => {
     const { shop, hmac, code, state } = req.query;
 
-    const logError = async (stage, error, additional_info = {}) => {
-        const logEntry = {
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            shop: shop || 'unknown',
-            stage: stage,
-            message: error.message || 'An unknown error occurred.',
-            stack: error.stack || null,
-            requestQuery: req.query,
-            ...additional_info
-        };
-        try {
-            await db.collection('logs').add(logEntry);
-        } catch (dbError) {
-            console.error("!!! FAILED TO WRITE TO FIRESTORE LOGS !!!", dbError);
-        }
-    };
-
     if (!shop || !hmac || !code || !state) {
-        await logError('callback_params_check', new Error('A required query parameter is missing.'), { received_params: Object.keys(req.query) });
+        await logError('callback_params_check', new Error('A required query parameter is missing.'), shop, { requestQuery: req.query });
         return res.status(400).send("Required parameters are missing.");
     }
 
     const apiSecret = shopifyApiSecret.value();
     if (!apiSecret) {
-        await logError('get_api_secret', new Error('SHOPIFY_API_SECRET is not loaded from params!'));
+        await logError('get_api_secret', new Error('SHOPIFY_API_SECRET is not loaded from params!'), shop, { requestQuery: req.query });
         return res.status(500).send("Server configuration error.");
     }
 
@@ -86,7 +96,7 @@ app.get("/auth/callback", async (req, res) => {
     const generatedHmac = crypto.createHmac('sha256', apiSecret).update(message).digest('hex');
 
     if (generatedHmac !== hmac) {
-        await logError('hmac_validation', new Error('HMAC validation failed.'), { generatedHmac, receivedHmac: hmac });
+        await logError('hmac_validation', new Error('HMAC validation failed.'), shop, { generatedHmac, receivedHmac: hmac, requestQuery: req.query });
         return res.status(400).send("HMAC validation failed.");
     }
 
@@ -95,17 +105,17 @@ app.get("/auth/callback", async (req, res) => {
         const storedState = shopDoc.exists ? shopDoc.data().state : null;
 
         if (!storedState || storedState !== state) {
-            await logError('nonce_verification', new Error('Nonce verification failed: state mismatch.'), { storedState, receivedState: state });
+            await logError('nonce_verification', new Error('Nonce verification failed: state mismatch.'), shop, { storedState, receivedState: state, requestQuery: req.query });
             return res.status(403).send("Request origin cannot be verified.");
         }
     } catch (error) {
-        await logError('nonce_firestore_error', error);
+        await logError('nonce_firestore_error', error, shop, { requestQuery: req.query });
         return res.status(500).send("Error during nonce verification.");
     }
 
     const apiKey = shopifyApiKey.value();
     if (!apiKey) {
-        await logError('get_api_key', new Error('SHOPIFY_API_KEY is not loaded from params!'));
+        await logError('get_api_key_callback', new Error('SHOPIFY_API_KEY is not loaded from params!'), shop, { requestQuery: req.query });
         return res.status(500).send("Server configuration error.");
     }
     const shopify = new Shopify({ shopName: shop, apiKey: apiKey, apiSecret: apiSecret });
@@ -133,7 +143,7 @@ app.get("/auth/callback", async (req, res) => {
         res.redirect(redirectUrl);
 
     } catch (error) {
-        await logError('exchange_temporary_code', error, { response: error.response ? error.response.body : 'No response body' });
+        await logError('exchange_temporary_code', error, shop, { response: error.response ? error.response.body : 'No response body', requestQuery: req.query });
         res.status(500).send(error.message || "An error occurred during the final step.");
     }
 });
