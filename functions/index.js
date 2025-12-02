@@ -40,6 +40,27 @@ const log = async (level, stage, shop, message, additional_info = {}) => {
     }
 };
 
+// Test endpoint for DB write
+app.post("/test-db-write", async (req, res) => {
+    const { shop } = req.body;
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop" });
+    try {
+        const docRef = await db.collection("test_writes").add({
+            shop: shop,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            message: "This is a test write from the new endpoint."
+        });
+        res.status(200).json({ success: true, message: `Test document written successfully with ID: ${docRef.id}` });
+    } catch (error) {
+        await log('ERROR', 'test_db_write_failed', shop, error.message, { stack: error.stack });
+        res.status(500).json({
+            success: false,
+            message: "Failed to write test document.",
+            error: error.message
+        });
+    }
+});
+
 app.get("/auth", async (req, res) => {
     const { shop, host } = req.query;
     if (!shop || !host) return res.status(400).send("Missing 'shop' or 'host' parameter.");

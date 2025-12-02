@@ -15,7 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Search, ServerCrash, Bot, Download } from "lucide-react";
+import { Search, ServerCrash, Bot, Download, Beaker } from "lucide-react";
 
 interface Product {
   id: string;
@@ -38,7 +38,31 @@ export function ProductsClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [testResult, setTestResult] = useState("");
   const shop = searchParams.get("shop");
+
+  const handleTestDbWrite = async () => {
+    if (!shop) {
+      setTestResult("Shopify session not found.");
+      return;
+    }
+    setTestResult("Running test...");
+    try {
+      const response = await fetch("/api/test-db-write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shop }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setTestResult(`SUCCESS: ${data.message}`);
+      } else {
+        setTestResult(`FAILED: ${data.message}`);
+      }
+    } catch (err: any) {
+      setTestResult(`ERROR: ${err.message}`);
+    }
+  };
 
   const fetchProducts = async () => {
     if (!shop) {
@@ -156,6 +180,19 @@ export function ProductsClient() {
         </div>
       </div>
       
+      <div className="my-4 p-4 border rounded-lg">
+          <h3 className="font-semibold mb-2">Database Write Test</h3>
+          <Button onClick={handleTestDbWrite} variant="outline">
+              <Beaker className="mr-2 h-4 w-4" />
+              Test Database Write
+          </Button>
+          {testResult && (
+              <p className="mt-2 text-sm text-muted-foreground bg-slate-100 p-2 rounded">
+                  {testResult}
+              </p>
+          )}
+      </div>
+
       {filteredProducts.length === 0 ? (
         <div className="text-center py-16">
             <h2 className="text-xl font-semibold">No Products Found</h2>
