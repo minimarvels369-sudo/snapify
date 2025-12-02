@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Search, ServerCrash, Bot } from "lucide-react";
+import { Search, ServerCrash, Bot, Download } from "lucide-react";
 
 interface Product {
   id: string;
@@ -35,44 +35,40 @@ export function ProductsClient() {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const shop = searchParams.get("shop");
 
-  useEffect(() => {
-    async function loadProducts() {
-      if (!shop) {
-        setError("Shopify session not found. Please re-authenticate.");
-        setLoading(false);
-        return;
-      }
-
-      try {
-        setLoading(true);
-        setError(null);
-        
-        await fetch("/api/products/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ shop }),
-        });
-
-        const response = await fetch(`/api/products?shop=${shop}`);
-        if (!response.ok) {
-          throw new Error("Failed to fetch products.");
-        }
-        const data = await response.json();
-        setProducts(data.products || []);
-      } catch (err: any) {
-        setError(err.message || "An unknown error occurred.");
-      } finally {
-        setLoading(false);
-      }
+  const fetchProducts = async () => {
+    if (!shop) {
+      setError("Shopify session not found. Please re-authenticate.");
+      setLoading(false);
+      return;
     }
 
-    loadProducts();
-  }, [shop]);
+    try {
+      setLoading(true);
+      setError(null);
+      
+      await fetch("/api/products/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shop }),
+      });
+
+      const response = await fetch(`/api/products?shop=${shop}`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch products.");
+      }
+      const data = await response.json();
+      setProducts(data.products || []);
+    } catch (err: any) {
+      setError(err.message || "An unknown error occurred.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSelectProduct = (productId: string, isSelected: boolean) => {
     setSelectedProducts((prev) =>
@@ -142,15 +138,21 @@ export function ProductsClient() {
     <div className="flex flex-col w-full gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-headline sm:text-3xl">Select Products</h1>
-        <div className="relative ml-auto flex-1 md:grow-0">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search products..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[336px]"
-          />
+        <div className="flex items-center gap-2">
+          <Button onClick={fetchProducts}>
+            <Download className="mr-2 h-4 w-4" />
+            Fetch Products
+          </Button>
+          <div className="relative ml-auto flex-1 md:grow-0">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search products..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[336px]"
+            />
+          </div>
         </div>
       </div>
       
@@ -158,7 +160,7 @@ export function ProductsClient() {
         <div className="text-center py-16">
             <h2 className="text-xl font-semibold">No Products Found</h2>
             <p className="text-muted-foreground">
-                {searchQuery ? "Try adjusting your search." : "It looks like your store has no products yet."}
+                {products.length === 0 ? "Click 'Fetch Products' to get started." : "Try adjusting your search."}
             </p>
         </div>
       ) : (

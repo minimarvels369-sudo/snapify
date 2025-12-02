@@ -145,7 +145,7 @@ app.get("/auth/callback", async (req, res) => {
     }
 });
 
-// --- UNCHANGED API ENDPOINTS ---
+// --- UPDATED API ENDPOINTS ---
 
 async function getShopifyClient(shopDomain) {
     const shopDoc = await db.collection('shops').doc(shopDomain).get();
@@ -159,12 +159,29 @@ async function getShopifyClient(shopDomain) {
 app.post("/products/sync", async (req, res) => {
     const { shop } = req.body;
     if (!shop) return res.status(400).json({ success: false, message: "Missing shop parameter." });
+
     try {
         const shopify = await getShopifyClient(shop);
-        // Fetching logic here...
-        res.status(200).json({ success: true, message: `Sync logic placeholder.` });
+        
+        await log('INFO', 'product_sync_start', shop, 'Starting product sync.');
+
+        const products = await shopify.product.list({ limit: 250 });
+
+        const batch = db.batch();
+        products.forEach(product => {
+            const productRef = db.collection('products').doc(product.id.toString());
+            batch.set(productRef, {
+                ...product,
+                shopDomain: shop // Add shop domain for filtering
+            }, { merge: true });
+        });
+        await batch.commit();
+
+        await log('SUCCESS', 'product_sync_finish', shop, `Synced ${products.length} products successfully.`);
+
+        res.status(200).json({ success: true, message: `Synced ${products.length} products.` });
     } catch (error) {
-        await log('ERROR', 'product_sync_error', shop, error.message);
+        await log('ERROR', 'product_sync_error', shop, error.message, { stack: error.stack });
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -172,15 +189,25 @@ app.post("/products/sync", async (req, res) => {
 app.get("/products", async (req, res) => {
     const { shop } = req.query;
     if (!shop) return res.status(400).send("Missing shop parameter.");
+
     try {
+        // Ensure the client is authenticated before trying to fetch
         await getShopifyClient(shop);
-        // Fetching logic here...
-        res.status(200).json({ products: [] });
+        
+        const productsSnapshot = await db.collection('products').where('shopDomain', '==', shop).get();
+        
+        if (productsSnapshot.empty) {
+            return res.status(200).json({ products: [] });
+        }
+        
+        const products = productsSnapshot.docs.map(doc => doc.data());
+
+        res.status(200).json({ products });
     } catch (error) {
         if (error.message.includes('access token missing')) {
              return res.status(401).send("Authentication required.");
         }
-        await log('ERROR', 'get_products_error', shop, error.message);
+        await log('ERROR', 'get_products_error', shop, error.message, { stack: error.stack });
         res.status(500).send("Could not fetch products.");
     }
 });
